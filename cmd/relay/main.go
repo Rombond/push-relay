@@ -81,7 +81,7 @@ func buildApps(ctx context.Context, cfg *config.Config) (map[string]*server.App,
 		if err != nil {
 			return nil, fmt.Errorf("app %s: %w", name, err)
 		}
-		app := &server.App{Templates: set, Senders: map[string]push.Sender{}}
+		app := &server.App{Templates: set, FreeText: ac.FreeText, Senders: map[string]push.Sender{}}
 		if ac.APNs != nil {
 			pem, err := os.ReadFile(ac.APNs.KeyFile)
 			if err != nil {

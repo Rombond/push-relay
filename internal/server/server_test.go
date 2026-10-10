@@ -179,7 +179,7 @@ func TestValidation(t *testing.T) {
 		"id with space": mut("id", "a b"),
 		"id empty":      mut("id", ""),
 		"id too long":   mut("id", strings.Repeat("a", 65)),
-		"unknown field": mut("body", "free text phishing"),
+		"unknown field": mut("text", "free text phishing"),
 		"not json":      "{",
 		"trailing json": `{"platform":"ios"} {}`,
 	}
@@ -207,7 +207,7 @@ func TestPlatformNotConfiguredForApp(t *testing.T) {
 func TestBodyTooLarge(t *testing.T) {
 	e := setup(t, defaults)
 	r := good()
-	r["lang"] = strings.Repeat("x", 5000)
+	r["lang"] = strings.Repeat("x", 9000)
 	if resp, _ := e.post(t, "/v1/push", e.key, r); resp.StatusCode != 413 {
 		t.Fatalf("%d", resp.StatusCode)
 	}
@@ -333,5 +333,57 @@ func TestHealthz(t *testing.T) {
 	resp, err := http.Get(e.srv.URL + "/healthz")
 	if err != nil || resp.StatusCode != 200 {
 		t.Fatalf("%v %v", resp, err)
+	}
+}
+
+func TestFreeTextOnlyForAppsThatAllowIt(t *testing.T) {
+	e := setup(t, defaults)
+	tpl, _ := templates.Parse(templates.Builtin("tipsarr"))
+	free := &fakeSender{}
+	e.s.Apps["free"] = &App{Templates: tpl, FreeText: true, Senders: map[string]push.Sender{"ios": free}}
+	freeKey, _, _ := e.st.Add("free", "test")
+
+	r := good()
+	r["title"] = "Demande approuvée\n"
+	r["body"] = "Inception\x07 " + strings.Repeat("é", 400)
+	if resp, out := e.post(t, "/v1/push", freeKey, r); resp.StatusCode != 200 {
+		t.Fatalf("%d %v", resp.StatusCode, out)
+	}
+	m := free.got[0]
+	if m.Title != "Demande approuvée" || !strings.HasPrefix(m.Body, "Inception é") || len([]rune(m.Body)) != maxBodyRunes {
+		t.Fatalf("title %q body %q (%d runes)", m.Title, m.Body, len([]rune(m.Body)))
+	}
+
+	// An app without free_text ignores the fields and keeps its template.
+	if resp, _ := e.post(t, "/v1/push", e.key, r); resp.StatusCode != 200 {
+		t.Fatal(resp.StatusCode)
+	}
+	if got := e.ios.got[0]; got.Title != "Demande approuvée" || strings.Contains(got.Body, "Inception") {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestFreeTextIsNeverLogged(t *testing.T) {
+	e := setup(t, defaults)
+	tpl, _ := templates.Parse(templates.Builtin("tipsarr"))
+	var logs bytes.Buffer
+	s := New(e.st, map[string]*App{"free": {Templates: tpl, FreeText: true, Senders: map[string]push.Sender{"ios": &fakeSender{}}}},
+		defaults, slog.New(slog.NewTextHandler(&logs, nil)))
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	key, _, _ := e.st.Add("free", "test")
+	r := good()
+	r["title"], r["body"] = "SECRET-TITLE", "SECRET-BODY"
+	var buf bytes.Buffer
+	json.NewEncoder(&buf).Encode(r)
+	req, _ := http.NewRequest("POST", srv.URL+"/v1/push", &buf)
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("%v %v", err, resp)
+	}
+	resp.Body.Close()
+	if logs.Len() == 0 || strings.Contains(logs.String(), "SECRET") || strings.Contains(logs.String(), iosTok) {
+		t.Fatalf("logs: %s", logs.String())
 	}
 }

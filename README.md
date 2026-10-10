@@ -4,7 +4,7 @@ A small, generic push relay for self-hosted apps. The app publisher runs it once
 
 Why a relay: APNs and FCM only accept messages signed with the publisher's key, so a user's own server cannot push to a store app it did not publish.
 
-- **Fixed message shape, no free text.** The relay builds the alert from `event` + `lang` using its own templates, so a stolen key cannot put arbitrary text on a lock screen. The app fetches details from its own server when opened.
+- **Fixed message shape, no free text by default.** The relay builds the alert from `event` + `lang` using its own templates, so a stolen key cannot put arbitrary text on a lock screen. The app fetches details from its own server when opened. An app can opt in with `free_text: true` in the config: its servers may then send `title` (100 characters) and `body` (300), cleaned of control characters, replacing the template text. Only for servers you run yourself. Titles and bodies are never logged: a log line holds the key id, app, platform, event and a short hash of the device.
 - **Per-server API keys**, scoped to one app, stored hashed, revocable at once.
 - **Rate limits** per key and per device token, optional daily quota per key.
 - **Stateless about devices**: tokens are never stored or logged (only a hash prefix).
@@ -25,6 +25,7 @@ Why a relay: APNs and FCM only accept messages signed with the publisher's key, 
 | `platform` | `ios` or `android` |
 | `token` | iOS: 64-200 hex chars; Android: 20-1000 chars `[A-Za-z0-9:_-]` |
 | `event` | must exist in the app's templates |
+| `title`, `body` | optional, used only when the app has `free_text: true`, ignored otherwise |
 | `id` | `[A-Za-z0-9_-]{1,64}` |
 | `lang` | `en`, `fr`, ... falls back to `en` |
 | `server` | optional host (and port) of the Tipsarr server; sent to the app as `server` so it opens the right account |

@@ -27,6 +27,9 @@ type App struct {
 	APNs      *APNs  `yaml:"apns"`
 	FCM       *FCM   `yaml:"fcm"`
 	Templates string `yaml:"templates"` // optional file, replaces the built-in texts
+	// FreeText lets this app's servers send their own alert title and body (templates stay the fallback).
+	// Off by default: only for apps whose servers you trust, since the text reaches the phones as is.
+	FreeText bool `yaml:"free_text"`
 }
 
 type APNs struct {

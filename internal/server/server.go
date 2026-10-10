@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/time/rate"
 
@@ -26,8 +27,8 @@ import (
 )
 
 const (
-	maxSingleBody = 4 << 10
-	maxBatchBody  = 64 << 10
+	maxSingleBody = 8 << 10
+	maxBatchBody  = 256 << 10
 	maxBatchItems = 100
 )
 
@@ -41,6 +42,7 @@ var (
 // App is one registered application: its texts and one sender per platform ("ios", "android").
 type App struct {
 	Templates *templates.Set
+	FreeText  bool // the request may carry its own title and body
 	Senders   map[string]push.Sender
 }
 
@@ -91,6 +93,8 @@ type Request struct {
 	ID       string `json:"id"`
 	Lang     string `json:"lang"`
 	Server   string `json:"server"` // optional: host (and port) of the Tipsarr server
+	Title    string `json:"title"`  // optional, only for apps with free_text: replaces the template title
+	Body     string `json:"body"`   // optional, only for apps with free_text: replaces the template body
 }
 
 type httpError struct {
@@ -266,6 +270,16 @@ func (s *Server) process(ctx context.Context, key store.Key, req Request) (push.
 	if !ok {
 		return push.Result{}, &httpError{http.StatusBadRequest, "unknown event"}
 	}
+	title, body := text.Title, text.Body
+	if app.FreeText {
+		// Never logged below: only who sent it and which device it went to.
+		if t := cleanText(req.Title, maxTitleRunes); t != "" {
+			title = t
+		}
+		if b := cleanText(req.Body, maxBodyRunes); b != "" {
+			body = b
+		}
+	}
 	th := tokenHash(req.Platform, req.Token)
 	log := s.Log.With("key", key.ID, "app", req.App, "platform", req.Platform, "event", req.Event, "device", th[:8])
 
@@ -291,7 +305,7 @@ func (s *Server) process(ctx context.Context, key store.Key, req Request) (push.
 
 	res := app.Senders[req.Platform].Send(ctx, push.Message{
 		Token: req.Token, Sandbox: req.Sandbox,
-		Title: text.Title, Body: text.Body,
+		Title: title, Body: body,
 		Event: req.Event, ID: req.ID, Category: category, Server: req.Server,
 	})
 	// A device that went away is a normal outcome, not a failure of the relay.
@@ -301,4 +315,24 @@ func (s *Server) process(ctx context.Context, key store.Key, req Request) (push.
 	s.met.count(req.App, req.Platform, res.Status)
 	log.Info("push", "status", res.Status, "error", res.Error)
 	return res, nil
+}
+
+const (
+	maxTitleRunes = 100
+	maxBodyRunes  = 300
+)
+
+// cleanText drops control characters and cuts the text to max runes.
+func cleanText(s string, max int) string {
+	out := make([]rune, 0, len(s))
+	for _, r := range strings.TrimSpace(s) {
+		if unicode.IsControl(r) {
+			continue
+		}
+		out = append(out, r)
+		if len(out) == max {
+			break
+		}
+	}
+	return strings.TrimSpace(string(out))
 }
