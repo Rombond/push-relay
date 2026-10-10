@@ -115,6 +115,15 @@ func TestPushHappyPathBuildsLocalizedAlert(t *testing.T) {
 	}
 }
 
+func TestServerHostIsPassedThrough(t *testing.T) {
+	e := setup(t, defaults)
+	r := good()
+	r["server"] = "tipsarr.example.org:8443"
+	if resp, _ := e.post(t, "/v1/push", e.key, r); resp.StatusCode != 200 || e.ios.got[0].Server != "tipsarr.example.org:8443" {
+		t.Fatalf("%d %+v", resp.StatusCode, e.ios.got)
+	}
+}
+
 func TestAndroidRoutesToFCM(t *testing.T) {
 	e := setup(t, defaults)
 	r := good()

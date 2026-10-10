@@ -12,6 +12,7 @@ type Message struct {
 	Event    string
 	ID       string
 	Category string
+	Server   string // host of the Tipsarr server the alert is about, so the app opens the right account
 }
 
 type Status string

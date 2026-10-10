@@ -79,7 +79,7 @@ func TestSendPayloadAndHeaders(t *testing.T) {
 		json.NewDecoder(r.Body).Decode(&body)
 	})
 	c := New(Config{BundleID: "com.x.app", TeamID: "TEAM", KeyID: "KID", Key: key, ProdURL: srv.URL, Client: srv.Client()})
-	res := c.Send(context.Background(), push.Message{Token: "abcd", Title: "T", Body: "B", Event: "request.approved", ID: "42"})
+	res := c.Send(context.Background(), push.Message{Token: "abcd", Title: "T", Body: "B", Event: "request.approved", ID: "42", Server: "tipsarr.example.org"})
 	if res.Status != push.Sent {
 		t.Fatalf("status %v", res)
 	}
@@ -88,7 +88,7 @@ func TestSendPayloadAndHeaders(t *testing.T) {
 	}
 	a := body["aps"].(map[string]any)
 	al := a["alert"].(map[string]any)
-	if al["title"] != "T" || al["body"] != "B" || a["thread-id"] != "42" || body["event"] != "request.approved" || body["id"] != "42" {
+	if al["title"] != "T" || al["body"] != "B" || a["thread-id"] != "42" || body["event"] != "request.approved" || body["id"] != "42" || body["server"] != "tipsarr.example.org" {
 		t.Fatalf("body %v", body)
 	}
 }

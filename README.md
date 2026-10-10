@@ -27,6 +27,7 @@ Why a relay: APNs and FCM only accept messages signed with the publisher's key, 
 | `event` | must exist in the app's templates |
 | `id` | `[A-Za-z0-9_-]{1,64}` |
 | `lang` | `en`, `fr`, ... falls back to `en` |
+| `server` | optional host (and port) of the Tipsarr server; sent to the app as `server` so it opens the right account |
 
 Body max 4 KB, unknown fields rejected.
 

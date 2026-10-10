@@ -67,11 +67,19 @@ type androidNotif struct {
 	Tag       string `json:"tag,omitempty"`
 }
 
+func data(m push.Message) map[string]string {
+	d := map[string]string{"event": m.Event, "id": m.ID}
+	if m.Server != "" {
+		d["server"] = m.Server
+	}
+	return d
+}
+
 func (c *Client) Send(ctx context.Context, m push.Message) push.Result {
 	body, _ := json.Marshal(sendBody{Message: message{
 		Token:        m.Token,
 		Notification: notification{Title: m.Title, Body: m.Body},
-		Data:         map[string]string{"event": m.Event, "id": m.ID},
+		Data:         data(m),
 		Android: android{
 			Priority:     "high",
 			TTL:          "86400s",

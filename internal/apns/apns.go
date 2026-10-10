@@ -106,9 +106,10 @@ func (c *Client) jwt(force bool) (string, error) {
 }
 
 type payload struct {
-	APS   aps    `json:"aps"`
-	Event string `json:"event"`
-	ID    string `json:"id"`
+	APS    aps    `json:"aps"`
+	Event  string `json:"event"`
+	ID     string `json:"id"`
+	Server string `json:"server,omitempty"`
 }
 
 type aps struct {
@@ -124,9 +125,10 @@ type alert struct {
 
 func (c *Client) Send(ctx context.Context, m push.Message) push.Result {
 	body, _ := json.Marshal(payload{
-		APS:   aps{Alert: alert{Title: m.Title, Body: m.Body}, Sound: "default", ThreadID: m.ID},
-		Event: m.Event,
-		ID:    m.ID,
+		APS:    aps{Alert: alert{Title: m.Title, Body: m.Body}, Sound: "default", ThreadID: m.ID},
+		Event:  m.Event,
+		ID:     m.ID,
+		Server: m.Server,
 	})
 	for attempt := 0; ; attempt++ {
 		res, expired := c.do(ctx, m, body, attempt > 0)

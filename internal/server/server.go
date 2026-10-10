@@ -32,6 +32,7 @@ const (
 )
 
 var (
+	serverRe   = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$`)
 	idRe       = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 	iosTokenRe = regexp.MustCompile(`^[0-9a-fA-F]{64,200}$`)
 	androidRe  = regexp.MustCompile(`^[A-Za-z0-9:_-]{20,1000}$`)
@@ -89,6 +90,7 @@ type Request struct {
 	Event    string `json:"event"`
 	ID       string `json:"id"`
 	Lang     string `json:"lang"`
+	Server   string `json:"server"` // optional: host (and port) of the Tipsarr server
 }
 
 type httpError struct {
@@ -247,6 +249,9 @@ func (s *Server) validate(key store.Key, req *Request) (*App, *httpError) {
 	if !idRe.MatchString(req.ID) {
 		return nil, &httpError{http.StatusBadRequest, "invalid id"}
 	}
+	if req.Server != "" && !serverRe.MatchString(req.Server) {
+		return nil, &httpError{http.StatusBadRequest, "invalid server"}
+	}
 	return app, nil
 }
 
@@ -287,7 +292,7 @@ func (s *Server) process(ctx context.Context, key store.Key, req Request) (push.
 	res := app.Senders[req.Platform].Send(ctx, push.Message{
 		Token: req.Token, Sandbox: req.Sandbox,
 		Title: text.Title, Body: text.Body,
-		Event: req.Event, ID: req.ID, Category: category,
+		Event: req.Event, ID: req.ID, Category: category, Server: req.Server,
 	})
 	// A device that went away is a normal outcome, not a failure of the relay.
 	if err := s.Store.Record(key.ID, now, res.Status != push.Failed); err != nil {

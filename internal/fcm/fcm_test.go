@@ -19,7 +19,7 @@ func TestSendPayload(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewWithClient("proj", srv.URL, srv.Client())
-	res := c.Send(context.Background(), push.Message{Token: "tok", Title: "T", Body: "B", Event: "request.available", ID: "7", Category: "requests"})
+	res := c.Send(context.Background(), push.Message{Token: "tok", Title: "T", Body: "B", Event: "request.available", ID: "7", Category: "requests", Server: "tipsarr.example.org"})
 	if res.Status != push.Sent {
 		t.Fatalf("%v", res)
 	}
@@ -30,7 +30,7 @@ func TestSendPayload(t *testing.T) {
 	notif := m["notification"].(map[string]any)
 	data := m["data"].(map[string]any)
 	and := m["android"].(map[string]any)
-	if m["token"] != "tok" || notif["title"] != "T" || data["event"] != "request.available" || data["id"] != "7" ||
+	if m["token"] != "tok" || notif["title"] != "T" || data["event"] != "request.available" || data["id"] != "7" || data["server"] != "tipsarr.example.org" ||
 		and["priority"] != "high" || and["notification"].(map[string]any)["channel_id"] != "requests" {
 		t.Fatalf("body %v", body)
 	}
