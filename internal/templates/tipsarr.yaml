@@ -27,3 +27,7 @@ events:
     category: issues
     en: { title: "New comment", body: "There is a new comment on an issue." }
     fr: { title: "Nouveau commentaire", body: "Il y a un nouveau commentaire sur un problème." }
+  issue.resolved:
+    category: issues
+    en: { title: "Issue resolved", body: "An issue you reported was resolved." }
+    fr: { title: "Problème résolu", body: "Un problème que vous avez signalé a été résolu." }

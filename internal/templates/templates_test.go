@@ -7,7 +7,7 @@ func TestBuiltinTipsarrParsesAndCoversEveryEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, ev := range []string{"request.approved", "request.declined", "request.failed", "request.available", "request.created", "issue.created", "issue.comment"} {
+	for _, ev := range []string{"request.approved", "request.declined", "request.failed", "request.available", "request.created", "issue.created", "issue.comment", "issue.resolved"} {
 		for _, lang := range []string{"en", "fr"} {
 			txt, cat, ok := s.Lookup(ev, lang)
 			if !ok || txt.Title == "" || txt.Body == "" || cat == "" {

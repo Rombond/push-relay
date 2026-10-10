@@ -42,7 +42,7 @@ Reply `{"status": "sent" | "invalid_token" | "rate_limited" | "error", "retryAft
 
 `POST /v1/push/batch` takes `{"items": [ ... ]}` (1 to 100 entries) and always answers 200 with `{"items": [result, ...]}` in the same order. `GET /healthz`. Prometheus counters on the separate `admin_listen` port at `/metrics`.
 
-Events for Tipsarr: `request.approved`, `request.declined`, `request.failed`, `request.available`, `request.created`, `issue.created`, `issue.comment`. Texts: `internal/templates/tipsarr.yaml`. Another app brings its own file with `templates:` in the config.
+Events for Tipsarr: `request.approved`, `request.declined`, `request.failed`, `request.available`, `request.created`, `issue.created`, `issue.comment`, `issue.resolved`. Texts: `internal/templates/tipsarr.yaml`. Another app brings its own file with `templates:` in the config.
 
 ## Run
 
