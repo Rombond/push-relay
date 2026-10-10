@@ -1,0 +1,29 @@
+events:
+  request.approved:
+    category: requests
+    en: { title: "Request approved", body: "Your request was approved." }
+    fr: { title: "Demande approuvée", body: "Votre demande a été approuvée." }
+  request.declined:
+    category: requests
+    en: { title: "Request declined", body: "Your request was declined." }
+    fr: { title: "Demande refusée", body: "Votre demande a été refusée." }
+  request.failed:
+    category: requests
+    en: { title: "Request failed", body: "Something went wrong with your request." }
+    fr: { title: "Demande échouée", body: "Un problème est survenu avec votre demande." }
+  request.available:
+    category: requests
+    en: { title: "Now available", body: "Your request is ready to watch." }
+    fr: { title: "Disponible", body: "Votre demande est prête à regarder." }
+  request.created:
+    category: admin
+    en: { title: "New request", body: "A new request is waiting for approval." }
+    fr: { title: "Nouvelle demande", body: "Une nouvelle demande attend votre approbation." }
+  issue.created:
+    category: issues
+    en: { title: "New issue", body: "An issue was reported." }
+    fr: { title: "Nouveau problème", body: "Un problème a été signalé." }
+  issue.comment:
+    category: issues
+    en: { title: "New comment", body: "There is a new comment on an issue." }
+    fr: { title: "Nouveau commentaire", body: "Il y a un nouveau commentaire sur un problème." }

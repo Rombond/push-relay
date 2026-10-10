@@ -1,0 +1,15 @@
+services:
+  push-relay:
+    image: ghcr.io/rombond/push-relay:latest
+    container_name: push-relay
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    volumes:
+      - ./config:/config:ro
+      - ./secrets:/secrets:ro
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8080:8080"   # the reverse proxy route to push.<domain> points here
+    # keys:  docker compose exec push-relay /relay keys add -app tipsarr -name "<owner>"

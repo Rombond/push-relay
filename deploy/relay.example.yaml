@@ -1,0 +1,22 @@
+# Copy to /config/relay.yaml. Secrets are mounted files, never baked in the image.
+listen: ":8080"
+admin_listen: ":9090"      # /metrics only, keep it off the public route
+db: /data/relay.db
+
+limits:
+  key_rate: 5              # requests per second per server key
+  key_burst: 50
+  token_per_minute: 10     # pushes per minute per device token
+  daily_quota: 0           # pushes per key per UTC day, 0 = unlimited
+
+apps:
+  tipsarr:
+    apns:
+      bundle_id: com.example.tipsarr
+      team_id: ABCDE12345
+      key_id: ABC123DEFG
+      key_file: /secrets/apns/AuthKey_ABC123DEFG.p8
+    fcm:
+      project_id: tipsarr-12345
+      credentials_file: /secrets/fcm/service-account.json
+    # templates: /config/tipsarr-texts.yaml   # optional, replaces the built-in en/fr texts

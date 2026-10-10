@@ -1,0 +1,6 @@
+/relay
+*.db
+*.db-*
+*.p8
+/config/
+/secrets/
