@@ -1,4 +1,4 @@
-// Package server is the relay's HTTP API: POST /v1/push, POST /v1/push/batch, GET /healthz.
+// Package server is the relay's HTTP API: POST /v1/push, POST /v1/push/batch, POST /v1/media, GET /m/{id}, GET /healthz.
 package server
 
 import (
@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/Rombond/push-relay/internal/config"
 	"github.com/Rombond/push-relay/internal/limit"
+	"github.com/Rombond/push-relay/internal/media"
 	"github.com/Rombond/push-relay/internal/push"
 	"github.com/Rombond/push-relay/internal/store"
 	"github.com/Rombond/push-relay/internal/templates"
@@ -37,13 +39,22 @@ var (
 	idRe       = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 	iosTokenRe = regexp.MustCompile(`^[0-9a-fA-F]{64,200}$`)
 	androidRe  = regexp.MustCompile(`^[A-Za-z0-9:_-]{20,1000}$`)
+	groupRe    = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`) // thread and collapse
+)
+
+const (
+	maxTTL      = 28 * 24 * 3600 // Apple keeps a push about 30 days at most
+	maxImageURL = 512
 )
 
 // App is one registered application: its texts and one sender per platform ("ios", "android").
 type App struct {
 	Templates *templates.Set
-	FreeText  bool // the request may carry its own title and body
+	FreeText  bool // the request may carry its own title and body, and level/sound/thread/collapse/ttl
 	Senders   map[string]push.Sender
+	// ImageDomains: hosts an `image` URL may use ("cdn.example.org" or "*.example.org"). Media: may upload images.
+	ImageDomains []string
+	Media        bool
 }
 
 type Server struct {
@@ -52,6 +63,7 @@ type Server struct {
 	Log    *slog.Logger
 	Now    func() time.Time
 	Quota  int
+	Media  *media.Store // nil = POST /v1/media and GET /m/ off
 	keyLim *limit.Limiter
 	tokLim *limit.Limiter
 	met    *Metrics
@@ -77,6 +89,10 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/push", s.handlePush)
 	mux.HandleFunc("POST /v1/push/batch", s.handleBatch)
+	if s.Media != nil {
+		mux.HandleFunc("POST /v1/media", s.handleMedia)
+		mux.HandleFunc("GET /m/{id}", s.Media.Serve)
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -95,6 +111,13 @@ type Request struct {
 	Server   string `json:"server"` // optional: host (and port) of the Tipsarr server
 	Title    string `json:"title"`  // optional, only for apps with free_text: replaces the template title
 	Body     string `json:"body"`   // optional, only for apps with free_text: replaces the template body
+	// v0.3.0, all optional; absent = the v0.2.0 payload. free_text apps only, except image (allow-list).
+	Level    string `json:"level"`    // passive, active, time-sensitive
+	Sound    string `json:"sound"`    // default, none
+	Thread   string `json:"thread"`   // groups notifications (default: one group per id)
+	Collapse string `json:"collapse"` // replaces the previous push with the same value
+	TTL      *int   `json:"ttl"`      // seconds kept for an offline device (default 24 h), 0 = now or never
+	Image    string `json:"image"`    // https URL on an allowed domain, or from POST /v1/media
 }
 
 type httpError struct {
@@ -256,7 +279,95 @@ func (s *Server) validate(key store.Key, req *Request) (*App, *httpError) {
 	if req.Server != "" && !serverRe.MatchString(req.Server) {
 		return nil, &httpError{http.StatusBadRequest, "invalid server"}
 	}
+	if herr := s.validatePresentation(app, req); herr != nil {
+		return nil, herr
+	}
 	return app, nil
+}
+
+// validatePresentation checks the v0.3.0 fields. They are free_text only: like the text, they decide what a lock
+// screen shows and how loud, so a stolen key of a template-only app cannot use them.
+func (s *Server) validatePresentation(app *App, req *Request) *httpError {
+	if (req.Level != "" || req.Sound != "" || req.Thread != "" || req.Collapse != "" || req.TTL != nil) && !app.FreeText {
+		return &httpError{http.StatusBadRequest, "level, sound, thread, collapse and ttl need free_text for this app"}
+	}
+	switch req.Level {
+	case "", "passive", "active", "time-sensitive":
+	default:
+		return &httpError{http.StatusBadRequest, "level must be passive, active or time-sensitive"}
+	}
+	switch req.Sound {
+	case "", "default", "none":
+	default:
+		return &httpError{http.StatusBadRequest, "sound must be default or none"}
+	}
+	if req.Thread != "" && !groupRe.MatchString(req.Thread) {
+		return &httpError{http.StatusBadRequest, "invalid thread"}
+	}
+	if req.Collapse != "" && !groupRe.MatchString(req.Collapse) {
+		return &httpError{http.StatusBadRequest, "invalid collapse"}
+	}
+	if req.TTL != nil && (*req.TTL < 0 || *req.TTL > maxTTL) {
+		return &httpError{http.StatusBadRequest, "ttl must be 0 to 2419200 seconds"}
+	}
+	if req.Image != "" && !s.imageAllowed(app, req.Image) {
+		return &httpError{http.StatusBadRequest, "image must be an https URL on a domain allowed for this app"}
+	}
+	return nil
+}
+
+func (s *Server) imageAllowed(app *App, raw string) bool {
+	if len(raw) > maxImageURL {
+		return false
+	}
+	if app.Media && s.Media != nil && strings.HasPrefix(raw, s.Media.Prefix()) {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, d := range app.ImageDomains {
+		d = strings.ToLower(d)
+		if host == d || (strings.HasPrefix(d, "*.") && strings.HasSuffix(host, d[1:])) {
+			return true
+		}
+	}
+	return false
+}
+
+// handleMedia stores one private image (raw JPEG or PNG body) and answers {"url","expiresAt"}.
+func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
+	key, herr, wait := s.authenticate(r)
+	if herr != nil {
+		if herr.status == http.StatusTooManyRequests {
+			w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(wait)))
+		}
+		writeErr(w, herr.status, herr.msg)
+		return
+	}
+	if app := s.Apps[key.App]; app == nil || !app.Media {
+		writeErr(w, http.StatusForbidden, "media uploads are off for this app")
+		return
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, int64(s.Media.MaxBytes)))
+	if err != nil {
+		writeErr(w, http.StatusRequestEntityTooLarge, "image too large")
+		return
+	}
+	u, exp, err := s.Media.Put(data)
+	switch {
+	case errors.Is(err, media.ErrType):
+		writeErr(w, http.StatusUnsupportedMediaType, err.Error())
+		return
+	case errors.Is(err, media.ErrFull):
+		w.Header().Set("Retry-After", "60")
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	s.Log.Info("media", "key", key.ID, "app", key.App, "bytes", len(data))
+	writeJSON(w, http.StatusOK, map[string]any{"url": u, "expiresAt": exp.UTC().Format(time.RFC3339)})
 }
 
 // process validates one request, applies the limits, delivers it and records the outcome.
@@ -307,6 +418,7 @@ func (s *Server) process(ctx context.Context, key store.Key, req Request) (push.
 		Token: req.Token, Sandbox: req.Sandbox,
 		Title: title, Body: body,
 		Event: req.Event, ID: req.ID, Category: category, Server: req.Server,
+		Level: req.Level, Silent: req.Sound == "none", Thread: req.Thread, Collapse: req.Collapse, TTL: req.TTL, Image: req.Image,
 	})
 	// A device that went away is a normal outcome, not a failure of the relay.
 	if err := s.Store.Record(key.ID, now, res.Status != push.Failed); err != nil {

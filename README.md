@@ -29,8 +29,14 @@ Why a relay: APNs and FCM only accept messages signed with the publisher's key, 
 | `id` | `[A-Za-z0-9_-]{1,64}` |
 | `lang` | `en`, `fr`, ... falls back to `en` |
 | `server` | optional host (and port) of the Tipsarr server; sent to the app as `server` so it opens the right account |
+| `level` | v0.3.0, `free_text` apps: `passive` (no screen wake), `active` (default), `time-sensitive` (breaks through allowed Focus modes). `critical` is not offered (needs an Apple entitlement) |
+| `sound` | v0.3.0, `free_text` apps: `default` or `none` (iOS; Android plays the channel sound, the app gets `sound: none` in `data`) |
+| `thread` | v0.3.0, `free_text` apps: groups notifications, `[A-Za-z0-9._:-]{1,64}` (default: one group per `id`) |
+| `collapse` | v0.3.0, `free_text` apps: a push with the same value replaces the previous one (`apns-collapse-id`, FCM `collapse_key` and tag) |
+| `ttl` | v0.3.0, `free_text` apps: seconds an offline device may still get it, 0 to 2419200 (default 24 h); 0 = now or never |
+| `image` | v0.3.0: `https` URL (512 characters max) on a host of the app's `image_domains`, or a URL from `POST /v1/media`. iOS: `mutable-content: 1` and `image` in the payload, for the app's Notification Service Extension; Android: `notification.image` |
 
-Body max 4 KB, unknown fields rejected.
+Body max 8 KB, unknown fields rejected. A request without the v0.3.0 fields produces exactly the v0.2.0 payload (golden tests in `internal/apns` and `internal/fcm`).
 
 Reply `{"status": "sent" | "invalid_token" | "rate_limited" | "error", "retryAfter"?, "error"?}`:
 
@@ -42,6 +48,8 @@ Reply `{"status": "sent" | "invalid_token" | "rate_limited" | "error", "retryAft
 | 429 | rate limited or daily quota, see `Retry-After` |
 | 502 | APNs/FCM failed, retry with backoff |
 
+`POST /v1/media` (v0.3.0, apps with `media: true`, relay with `media.base_url`): raw JPEG or PNG body (1 MiB max) with the server key. Answers `{"url": "https://<base>/m/<id>?sig=...", "expiresAt": ...}`. The image is kept in memory for `media.ttl` (1 h) and `media.max_uses` downloads (5), then gone; a restart forgets every image. `GET /m/<id>?sig=...` serves it (404 otherwise). Use it for private pictures (camera snapshot) that the phone must fetch from outside the home network: it makes `/m/` public on the relay's route.
+
 `POST /v1/push/batch` takes `{"items": [ ... ]}` (1 to 100 entries) and always answers 200 with `{"items": [result, ...]}` in the same order. `GET /healthz`. Prometheus counters on the separate `admin_listen` port at `/metrics`.
 
 Events for Tipsarr: `request.approved`, `request.declined`, `request.failed`, `request.available`, `request.created`, `issue.created`, `issue.comment`, `issue.resolved`. Texts: `internal/templates/tipsarr.yaml`. Another app brings its own file with `templates:` in the config.
@@ -52,6 +60,7 @@ Events for Tipsarr: `request.approved`, `request.declined`, `request.failed`, `r
 cp deploy/relay.example.yaml config/relay.yaml     # fill bundle id, team id, key id, project id
 # put the APNs .p8 and the FCM service account JSON under secrets/
 docker compose -f deploy/compose.example.yaml up -d
+docker compose exec push-relay /relay check                                       # validate config, templates and credentials
 docker compose exec push-relay /relay keys add -app tipsarr -name "home server"   # prints the key once
 docker compose exec push-relay /relay keys list
 docker compose exec push-relay /relay keys revoke 1

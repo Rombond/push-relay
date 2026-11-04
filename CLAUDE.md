@@ -4,5 +4,7 @@ Generic multi-app push relay (APNs + FCM), Go, MIT. Companion of Tipsarr (`~/Doc
 
 - Checks: `gofmt -l .`, `go vet ./...`, `go test -race ./...` (CI runs the same plus a Docker build).
 - Never log or store device tokens or raw keys. Alert text comes from templates; the request's `title`/`body` replace it only for apps with `free_text: true`. Never log them.
+- v0.3.0 fields (`level`, `sound`, `thread`, `collapse`, `ttl`) are `free_text` only; `image` needs the app's `image_domains` (or its own `POST /v1/media` upload). Absent fields must keep the v0.2.0 payload byte for byte: `regression_test.go` in `internal/apns` and `internal/fcm`.
+- `relay check` validates a config before a restart.
 - New event: add it to `internal/templates/<app>.yaml` (en required) and to the README list.
 - Never deploy or add a reverse proxy route without the user's explicit go.

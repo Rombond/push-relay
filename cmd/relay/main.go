@@ -17,6 +17,7 @@ import (
 	"github.com/Rombond/push-relay/internal/apns"
 	"github.com/Rombond/push-relay/internal/config"
 	"github.com/Rombond/push-relay/internal/fcm"
+	"github.com/Rombond/push-relay/internal/media"
 	"github.com/Rombond/push-relay/internal/push"
 	"github.com/Rombond/push-relay/internal/server"
 	"github.com/Rombond/push-relay/internal/store"
@@ -36,6 +37,14 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
+	case "check":
+		fs := flag.NewFlagSet("check", flag.ExitOnError)
+		path := fs.String("config", envOr("RELAY_CONFIG", "/config/relay.yaml"), "config file")
+		fs.Parse(os.Args[2:])
+		if err := check(*path); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
 	case "keys":
 		if err := keys(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -49,6 +58,7 @@ func main() {
 func usage() {
 	fmt.Fprint(os.Stderr, `usage:
   relay serve [-config relay.yaml]
+  relay check [-config relay.yaml]     validate config, templates and credential files, then exit
   relay keys add  -app <app> -name <owner> [-config relay.yaml]
   relay keys list [-config relay.yaml]
   relay keys revoke <id> [-config relay.yaml]
@@ -81,7 +91,8 @@ func buildApps(ctx context.Context, cfg *config.Config) (map[string]*server.App,
 		if err != nil {
 			return nil, fmt.Errorf("app %s: %w", name, err)
 		}
-		app := &server.App{Templates: set, FreeText: ac.FreeText, Senders: map[string]push.Sender{}}
+		app := &server.App{Templates: set, FreeText: ac.FreeText, Senders: map[string]push.Sender{},
+			ImageDomains: ac.ImageDomains, Media: ac.Media}
 		if ac.APNs != nil {
 			pem, err := os.ReadFile(ac.APNs.KeyFile)
 			if err != nil {
@@ -109,6 +120,26 @@ func buildApps(ctx context.Context, cfg *config.Config) (map[string]*server.App,
 	return apps, nil
 }
 
+// check loads everything serve would, without opening the database or listening: run it before a restart.
+func check(path string) error {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	apps, err := buildApps(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	for name, a := range apps {
+		fmt.Printf("app %s: %d events, free_text %v, platforms %d, image domains %d, media %v\n",
+			name, len(a.Templates.Events), a.FreeText, len(a.Senders), len(a.ImageDomains), a.Media)
+	}
+	fmt.Println("config ok")
+	return nil
+}
+
 func serve(path string) error {
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -128,6 +159,9 @@ func serve(path string) error {
 		return err
 	}
 	srv := server.New(st, apps, cfg.Limits, log)
+	if m := cfg.Media; m.BaseURL != "" {
+		srv.Media = media.New(m.BaseURL, time.Duration(m.TTL)*time.Second, m.MaxUses, m.MaxBytes, m.MaxItems)
+	}
 
 	api := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second}
 	errc := make(chan error, 2)

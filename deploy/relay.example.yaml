@@ -9,6 +9,13 @@ limits:
   token_per_minute: 10     # pushes per minute per device token
   daily_quota: 0           # pushes per key per UTC day, 0 = unlimited
 
+# media:                    # v0.3.0: POST /v1/media + GET /m/<id> for private notification images, off without base_url
+#   base_url: https://push.example.org
+#   ttl: 3600               # seconds an image stays downloadable
+#   max_uses: 5
+#   max_bytes: 1048576
+#   max_items: 100
+
 apps:
   tipsarr:
     apns:
@@ -20,3 +27,6 @@ apps:
       project_id: tipsarr-12345
       credentials_file: /secrets/fcm/service-account.json
     # templates: /config/tipsarr-texts.yaml   # optional, replaces the built-in en/fr texts
+    # free_text: true                         # servers may send title/body and level, sound, thread, collapse, ttl
+    # image_domains: [image.tmdb.org]          # hosts an `image` URL may use ("*.example.org" works)
+    # media: true                              # servers may upload private images (needs media.base_url)
