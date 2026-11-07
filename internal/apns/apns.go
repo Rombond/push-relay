@@ -105,17 +105,21 @@ func (c *Client) jwt(force bool) (string, error) {
 	return c.token, nil
 }
 
+// Field order and omitempty keep a v0.2.0 message byte for byte identical (regression_test.go).
 type payload struct {
 	APS    aps    `json:"aps"`
 	Event  string `json:"event"`
 	ID     string `json:"id"`
 	Server string `json:"server,omitempty"`
+	Image  string `json:"image,omitempty"` // read by the app's Notification Service Extension
 }
 
 type aps struct {
-	Alert    alert  `json:"alert"`
-	Sound    string `json:"sound"`
-	ThreadID string `json:"thread-id,omitempty"`
+	Alert             alert  `json:"alert"`
+	Sound             string `json:"sound,omitempty"`
+	ThreadID          string `json:"thread-id,omitempty"`
+	MutableContent    int    `json:"mutable-content,omitempty"`
+	InterruptionLevel string `json:"interruption-level,omitempty"`
 }
 
 type alert struct {
@@ -123,13 +127,23 @@ type alert struct {
 	Body  string `json:"body"`
 }
 
+func buildPayload(m push.Message) []byte {
+	a := aps{Alert: alert{Title: m.Title, Body: m.Body}, Sound: "default", ThreadID: m.ID, InterruptionLevel: m.Level}
+	if m.Silent {
+		a.Sound = ""
+	}
+	if m.Thread != "" {
+		a.ThreadID = m.Thread
+	}
+	if m.Image != "" {
+		a.MutableContent = 1
+	}
+	body, _ := json.Marshal(payload{APS: a, Event: m.Event, ID: m.ID, Server: m.Server, Image: m.Image})
+	return body
+}
+
 func (c *Client) Send(ctx context.Context, m push.Message) push.Result {
-	body, _ := json.Marshal(payload{
-		APS:    aps{Alert: alert{Title: m.Title, Body: m.Body}, Sound: "default", ThreadID: m.ID},
-		Event:  m.Event,
-		ID:     m.ID,
-		Server: m.Server,
-	})
+	body := buildPayload(m)
 	for attempt := 0; ; attempt++ {
 		res, expired := c.do(ctx, m, body, attempt > 0)
 		if expired && attempt == 0 {
@@ -157,7 +171,17 @@ func (c *Client) do(ctx context.Context, m push.Message, body []byte, forceJWT b
 	req.Header.Set("apns-topic", c.cfg.BundleID)
 	req.Header.Set("apns-push-type", "alert")
 	req.Header.Set("apns-priority", "10")
-	req.Header.Set("apns-expiration", strconv.FormatInt(c.cfg.Now().Add(24*time.Hour).Unix(), 10))
+	expiry := strconv.FormatInt(c.cfg.Now().Add(24*time.Hour).Unix(), 10)
+	if m.TTL != nil {
+		expiry = "0" // deliver now or never
+		if *m.TTL > 0 {
+			expiry = strconv.FormatInt(c.cfg.Now().Add(time.Duration(*m.TTL)*time.Second).Unix(), 10)
+		}
+	}
+	req.Header.Set("apns-expiration", expiry)
+	if m.Collapse != "" {
+		req.Header.Set("apns-collapse-id", m.Collapse)
+	}
 	req.Header.Set("content-type", "application/json")
 
 	resp, err := c.cfg.Client.Do(req)

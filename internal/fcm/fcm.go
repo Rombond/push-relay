@@ -51,20 +51,24 @@ type message struct {
 	Android      android           `json:"android"`
 }
 
+// Field order and omitempty keep a v0.2.0 message byte for byte identical (regression_test.go).
 type notification struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
+	Image string `json:"image,omitempty"`
 }
 
 type android struct {
 	Priority     string       `json:"priority"`
+	CollapseKey  string       `json:"collapse_key,omitempty"`
 	Notification androidNotif `json:"notification"`
 	TTL          string       `json:"ttl"`
 }
 
 type androidNotif struct {
-	ChannelID string `json:"channel_id"`
-	Tag       string `json:"tag,omitempty"`
+	ChannelID            string `json:"channel_id"`
+	Tag                  string `json:"tag,omitempty"`
+	NotificationPriority string `json:"notification_priority,omitempty"`
 }
 
 func data(m push.Message) map[string]string {
@@ -72,19 +76,38 @@ func data(m push.Message) map[string]string {
 	if m.Server != "" {
 		d["server"] = m.Server
 	}
+	if m.Thread != "" {
+		d["thread"] = m.Thread
+	}
+	if m.Silent { // Android plays the channel's sound: the app may pick a silent channel from this
+		d["sound"] = "none"
+	}
 	return d
+}
+
+func buildAndroid(m push.Message) android {
+	a := android{Priority: "high", TTL: "86400s", Notification: androidNotif{ChannelID: m.Category, Tag: m.ID}}
+	switch m.Level {
+	case "passive":
+		a.Priority, a.Notification.NotificationPriority = "normal", "PRIORITY_LOW"
+	case "time-sensitive":
+		a.Notification.NotificationPriority = "PRIORITY_HIGH"
+	}
+	if m.Collapse != "" {
+		a.CollapseKey, a.Notification.Tag = m.Collapse, m.Collapse // same tag = replaces the shown notification
+	}
+	if m.TTL != nil {
+		a.TTL = strconv.Itoa(*m.TTL) + "s"
+	}
+	return a
 }
 
 func (c *Client) Send(ctx context.Context, m push.Message) push.Result {
 	body, _ := json.Marshal(sendBody{Message: message{
 		Token:        m.Token,
-		Notification: notification{Title: m.Title, Body: m.Body},
+		Notification: notification{Title: m.Title, Body: m.Body, Image: m.Image},
 		Data:         data(m),
-		Android: android{
-			Priority:     "high",
-			TTL:          "86400s",
-			Notification: androidNotif{ChannelID: m.Category, Tag: m.ID},
-		},
+		Android:      buildAndroid(m),
 	}})
 	url := fmt.Sprintf("%s/v1/projects/%s/messages:send", c.base, c.project)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))

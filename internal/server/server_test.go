@@ -275,7 +275,7 @@ func TestDailyQuota(t *testing.T) {
 		r["token"] = strings.Repeat(string(rune('a'+i)), 64)
 		resp, out = e.post(t, "/v1/push", e.key, r)
 	}
-	if resp.StatusCode != 429 || out["retryAfter"].(float64) != 4*3600 {
+	if resp.StatusCode != 429 || out["status"] != "quota_exceeded" || out["retryAfter"].(float64) != 4*3600 {
 		t.Fatalf("%d %v", resp.StatusCode, out)
 	}
 	e.s.Now = func() time.Time { return time.Date(2026, 10, 11, 0, 0, 1, 0, time.UTC) }

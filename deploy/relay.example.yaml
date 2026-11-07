@@ -9,6 +9,22 @@ limits:
   token_per_minute: 10     # pushes per minute per device token
   daily_quota: 0           # pushes per key per UTC day, 0 = unlimited
 
+# media:                    # v0.3.0: POST /v1/media + GET /m/<id> for private notification images, off without base_url
+#   base_url: https://push.example.org
+#   ttl: 3600               # seconds an image stays downloadable
+#   max_uses: 5
+#   max_bytes: 1048576
+#   max_items: 100
+
+# registration:              # v0.4.0: POST /v1/register for apps with open_registration: true
+#   closed: false             # kill switch, also RELAY_REGISTRATION_CLOSED=1 or `relay registration close`
+#   new_keys_per_hour: 50     # global cap of new public keys, rotations free, -1 = none
+#   per_ip_per_minute: 30
+#   daily_quota: 200          # per public key, -1 = unlimited
+#   unused_days: 90           # delete public keys unused this long, -1 = never
+#   ip_retention_days: 30     # keep registration address hashes this long, -1 = forever
+#   client_ip_header: X-Forwarded-For   # only behind your reverse proxy
+
 apps:
   tipsarr:
     apns:
@@ -20,3 +36,7 @@ apps:
       project_id: tipsarr-12345
       credentials_file: /secrets/fcm/service-account.json
     # templates: /config/tipsarr-texts.yaml   # optional, replaces the built-in en/fr texts
+    # free_text: true                         # servers may send title/body and level, sound, thread, collapse, ttl
+    # image_domains: [image.tmdb.org]          # hosts an `image` URL may use ("*.example.org" works)
+    # media: true                              # servers may upload private images (needs media.base_url)
+    # open_registration: true                  # any server may get a public key (templates only, daily quota)

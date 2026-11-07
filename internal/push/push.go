@@ -13,6 +13,14 @@ type Message struct {
 	ID       string
 	Category string
 	Server   string // host of the Tipsarr server the alert is about, so the app opens the right account
+
+	// Optional presentation (v0.3.0). Zero values keep the v0.2.0 behaviour and payload.
+	Level    string // "", "passive", "active", "time-sensitive"
+	Silent   bool   // no sound
+	Thread   string // groups notifications; "" = one thread per id (v0.2.0)
+	Collapse string // a newer push with the same value replaces the older one
+	TTL      *int   // seconds Apple/Google keep it for an offline device; nil = 24 h (v0.2.0), 0 = now or never
+	Image    string // https URL the app's notification extension downloads (iOS) / shown by Android
 }
 
 type Status string
@@ -21,7 +29,9 @@ const (
 	Sent         Status = "sent"
 	InvalidToken Status = "invalid_token"
 	RateLimited  Status = "rate_limited"
-	Failed       Status = "error"
+	// QuotaExceeded: the key's daily quota is used up, retry after the next UTC midnight (retryAfter).
+	QuotaExceeded Status = "quota_exceeded"
+	Failed        Status = "error"
 )
 
 // Result is the outcome for one message.
