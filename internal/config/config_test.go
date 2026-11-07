@@ -41,3 +41,23 @@ func TestMediaAndImageDomains(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistrationDefaults(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "relay.yaml")
+	os.WriteFile(p, []byte("apps:\n  x:\n    open_registration: true\n"+apns), 0o600)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := c.Register
+	if r.Closed || r.NewKeysPerHour != 50 || r.PerIPPerMinute != 30 || r.DailyQuota != 200 || r.UnusedDays != 90 || r.IPRetentionDays != 30 || !c.Apps["x"].OpenRegistration {
+		t.Fatalf("%+v", r)
+	}
+	t.Setenv("RELAY_REGISTRATION_CLOSED", "1")
+	if c, _ = Load(p); !c.Register.Closed {
+		t.Fatal("env kill switch ignored")
+	}
+	if err := load(t, "registration: {daily_quota: -5}\napps:\n  x:\n"+apns); err == nil {
+		t.Fatal("negative accepted")
+	}
+}

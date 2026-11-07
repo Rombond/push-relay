@@ -29,7 +29,9 @@ const (
 	Sent         Status = "sent"
 	InvalidToken Status = "invalid_token"
 	RateLimited  Status = "rate_limited"
-	Failed       Status = "error"
+	// QuotaExceeded: the key's daily quota is used up, retry after the next UTC midnight (retryAfter).
+	QuotaExceeded Status = "quota_exceeded"
+	Failed        Status = "error"
 )
 
 // Result is the outcome for one message.

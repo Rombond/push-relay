@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -24,6 +25,11 @@ type Key struct {
 	Revoked   bool
 	Sent      int64
 	Failed    int64
+	// v0.4.0 open registration
+	Public    bool       // created by POST /v1/register
+	Quota     *int       // per-key daily quota override, nil = the default for its kind, 0 = unlimited
+	LastUsed  *time.Time // last authenticated request (updated at most once an hour)
+	InstallID string
 }
 
 type Store struct{ db *sql.DB }
@@ -45,16 +51,60 @@ CREATE TABLE IF NOT EXISTS usage (
   PRIMARY KEY (key_id, day)
 );`
 
+// migrations run in order; PRAGMA user_version holds how many were applied.
+var migrations = []string{
+	// 1: v0.4.0 open registration. reg_ip is a keyed hash (see HashIP), never the address itself.
+	`ALTER TABLE keys ADD COLUMN public INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE keys ADD COLUMN install_id TEXT;
+ALTER TABLE keys ADD COLUMN server_url TEXT;
+ALTER TABLE keys ADD COLUMN version TEXT;
+ALTER TABLE keys ADD COLUMN reg_ip TEXT;
+ALTER TABLE keys ADD COLUMN quota INTEGER;
+ALTER TABLE keys ADD COLUMN last_used_at TEXT;
+ALTER TABLE keys ADD COLUMN rotated_at TEXT;
+CREATE UNIQUE INDEX keys_install ON keys(app, install_id) WHERE install_id IS NOT NULL;
+CREATE INDEX keys_public_created ON keys(public, created_at);
+CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);`,
+}
+
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+func migrate(db *sql.DB) error {
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return err
+	}
+	for i := v; i < len(migrations); i++ {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(migrations[i]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migration %d: %w", i+1, err)
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, i+1)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -64,15 +114,24 @@ func hash(raw string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// Add creates a key for an app. The raw key is returned once and never stored.
-func (s *Store) Add(app, name string) (string, int64, error) {
+func newRaw() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "pr_" + base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func ts(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// Add creates a key for an app. The raw key is returned once and never stored.
+func (s *Store) Add(app, name string) (string, int64, error) {
+	raw, err := newRaw()
+	if err != nil {
 		return "", 0, err
 	}
-	raw := "pr_" + base64.RawURLEncoding.EncodeToString(b)
 	res, err := s.db.Exec(`INSERT INTO keys (app, name, hash, created_at) VALUES (?, ?, ?, ?)`,
-		app, name, hash(raw), time.Now().UTC().Format(time.RFC3339))
+		app, name, hash(raw), ts(time.Now()))
 	if err != nil {
 		return "", 0, err
 	}
@@ -84,8 +143,10 @@ func (s *Store) Add(app, name string) (string, int64, error) {
 func (s *Store) Lookup(raw string) (Key, error) {
 	var k Key
 	var created string
-	err := s.db.QueryRow(`SELECT id, app, name, created_at FROM keys WHERE hash = ? AND revoked_at IS NULL`, hash(raw)).
-		Scan(&k.ID, &k.App, &k.Name, &created)
+	var quota sql.NullInt64
+	var last, inst sql.NullString
+	err := s.db.QueryRow(`SELECT id, app, name, created_at, public, quota, last_used_at, install_id FROM keys WHERE hash = ? AND revoked_at IS NULL`, hash(raw)).
+		Scan(&k.ID, &k.App, &k.Name, &created, &k.Public, &quota, &last, &inst)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Key{}, ErrNotFound
 	}
@@ -93,12 +154,26 @@ func (s *Store) Lookup(raw string) (Key, error) {
 		return Key{}, err
 	}
 	k.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	fill(&k, quota, last, inst)
 	return k, nil
+}
+
+func fill(k *Key, quota sql.NullInt64, last, inst sql.NullString) {
+	if quota.Valid {
+		q := int(quota.Int64)
+		k.Quota = &q
+	}
+	if last.Valid {
+		if t, err := time.Parse(time.RFC3339, last.String); err == nil {
+			k.LastUsed = &t
+		}
+	}
+	k.InstallID = inst.String
 }
 
 func (s *Store) Revoke(id int64) error {
 	res, err := s.db.Exec(`UPDATE keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
-		time.Now().UTC().Format(time.RFC3339), id)
+		ts(time.Now()), id)
 	if err != nil {
 		return err
 	}
@@ -112,7 +187,7 @@ func (s *Store) Revoke(id int64) error {
 func (s *Store) List() ([]Key, error) {
 	rows, err := s.db.Query(`
 SELECT k.id, k.app, k.name, k.created_at, k.revoked_at IS NOT NULL,
-       COALESCE(SUM(u.sent), 0), COALESCE(SUM(u.failed), 0)
+       COALESCE(SUM(u.sent), 0), COALESCE(SUM(u.failed), 0), k.public, k.quota, k.last_used_at, k.install_id
 FROM keys k LEFT JOIN usage u ON u.key_id = k.id
 GROUP BY k.id ORDER BY k.id`)
 	if err != nil {
@@ -123,10 +198,13 @@ GROUP BY k.id ORDER BY k.id`)
 	for rows.Next() {
 		var k Key
 		var created string
-		if err := rows.Scan(&k.ID, &k.App, &k.Name, &created, &k.Revoked, &k.Sent, &k.Failed); err != nil {
+		var quota sql.NullInt64
+		var last, inst sql.NullString
+		if err := rows.Scan(&k.ID, &k.App, &k.Name, &created, &k.Revoked, &k.Sent, &k.Failed, &k.Public, &quota, &last, &inst); err != nil {
 			return nil, err
 		}
 		k.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		fill(&k, quota, last, inst)
 		out = append(out, k)
 	}
 	return out, rows.Err()

@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -55,6 +56,8 @@ type App struct {
 	// ImageDomains: hosts an `image` URL may use ("cdn.example.org" or "*.example.org"). Media: may upload images.
 	ImageDomains []string
 	Media        bool
+	// OpenRegistration: any server may get a public key with POST /v1/register.
+	OpenRegistration bool
 }
 
 type Server struct {
@@ -67,11 +70,14 @@ type Server struct {
 	keyLim *limit.Limiter
 	tokLim *limit.Limiter
 	met    *Metrics
+	reg    config.Registration
+	regLim *limit.Limiter
+	regMu  sync.Mutex
 }
 
 func New(st *store.Store, apps map[string]*App, lim config.Limits, log *slog.Logger) *Server {
 	perMin := lim.TokenPerMinute
-	return &Server{
+	s := &Server{
 		Store:  st,
 		Apps:   apps,
 		Log:    log,
@@ -81,6 +87,9 @@ func New(st *store.Store, apps map[string]*App, lim config.Limits, log *slog.Log
 		tokLim: limit.New(rate.Limit(float64(perMin)/60), max(3, perMin/2)),
 		met:    newMetrics(),
 	}
+	s.SetRegistration(config.Registration{NewKeysPerHour: 50, PerIPPerMinute: 30, DailyQuota: 200})
+	s.met.Keys = st.CountKeys
+	return s
 }
 
 func (s *Server) Metrics() *Metrics { return s.met }
@@ -89,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/push", s.handlePush)
 	mux.HandleFunc("POST /v1/push/batch", s.handleBatch)
+	mux.HandleFunc("POST /v1/register", s.handleRegister)
 	if s.Media != nil {
 		mux.HandleFunc("POST /v1/media", s.handleMedia)
 		mux.HandleFunc("GET /m/{id}", s.Media.Serve)
@@ -172,6 +182,9 @@ func (s *Server) authenticate(r *http.Request) (store.Key, *httpError, time.Dura
 	if ok, wait := s.keyLim.Allow(strconv.FormatInt(key.ID, 10)); !ok {
 		return store.Key{}, &httpError{http.StatusTooManyRequests, "rate limit"}, wait
 	}
+	if err := s.Store.Touch(key, s.Now()); err != nil {
+		s.Log.Error("touch key", "err", err)
+	}
 	return key, nil, 0
 }
 
@@ -199,7 +212,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch res.Status {
-	case push.RateLimited:
+	case push.RateLimited, push.QuotaExceeded:
 		w.Header().Set("Retry-After", strconv.Itoa(res.RetryAfter))
 		writeJSON(w, http.StatusTooManyRequests, res)
 	case push.Failed:
@@ -279,16 +292,19 @@ func (s *Server) validate(key store.Key, req *Request) (*App, *httpError) {
 	if req.Server != "" && !serverRe.MatchString(req.Server) {
 		return nil, &httpError{http.StatusBadRequest, "invalid server"}
 	}
-	if herr := s.validatePresentation(app, req); herr != nil {
+	if herr := s.validatePresentation(app, req, freeText(app, key)); herr != nil {
 		return nil, herr
 	}
 	return app, nil
 }
 
+// freeText: public keys (open registration) always get the templates, whatever the app allows.
+func freeText(app *App, key store.Key) bool { return app.FreeText && !key.Public }
+
 // validatePresentation checks the v0.3.0 fields. They are free_text only: like the text, they decide what a lock
 // screen shows and how loud, so a stolen key of a template-only app cannot use them.
-func (s *Server) validatePresentation(app *App, req *Request) *httpError {
-	if (req.Level != "" || req.Sound != "" || req.Thread != "" || req.Collapse != "" || req.TTL != nil) && !app.FreeText {
+func (s *Server) validatePresentation(app *App, req *Request, free bool) *httpError {
+	if (req.Level != "" || req.Sound != "" || req.Thread != "" || req.Collapse != "" || req.TTL != nil) && !free {
 		return &httpError{http.StatusBadRequest, "level, sound, thread, collapse and ttl need free_text for this app"}
 	}
 	switch req.Level {
@@ -382,7 +398,7 @@ func (s *Server) process(ctx context.Context, key store.Key, req Request) (push.
 		return push.Result{}, &httpError{http.StatusBadRequest, "unknown event"}
 	}
 	title, body := text.Title, text.Body
-	if app.FreeText {
+	if freeText(app, key) {
 		// Never logged below: only who sent it and which device it went to.
 		if t := cleanText(req.Title, maxTitleRunes); t != "" {
 			title = t
@@ -395,16 +411,18 @@ func (s *Server) process(ctx context.Context, key store.Key, req Request) (push.
 	log := s.Log.With("key", key.ID, "app", req.App, "platform", req.Platform, "event", req.Event, "device", th[:8])
 
 	now := s.Now()
-	if s.Quota > 0 {
+	if q := s.quotaFor(key); q > 0 {
 		n, err := s.Store.Today(key.ID, now)
 		if err != nil {
 			log.Error("quota", "err", err)
 			return push.Result{}, &httpError{http.StatusInternalServerError, "internal error"}
 		}
-		if n >= s.Quota {
-			next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
-			res := push.Result{Status: push.RateLimited, RetryAfter: retrySeconds(next.Sub(now)), Error: "daily quota reached"}
+		if n >= q {
+			u := now.UTC()
+			next := time.Date(u.Year(), u.Month(), u.Day()+1, 0, 0, 0, 0, time.UTC)
+			res := push.Result{Status: push.QuotaExceeded, RetryAfter: retrySeconds(next.Sub(now)), Error: "daily quota reached"}
 			s.met.count(req.App, req.Platform, res.Status)
+			s.met.inc("push_relay_quota_refusals_total", "app", req.App)
 			return res, nil
 		}
 	}
