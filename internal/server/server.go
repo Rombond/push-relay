@@ -1,4 +1,4 @@
-// Package server is the relay's HTTP API: POST /v1/push, POST /v1/push/batch, POST /v1/media, GET /m/{id}, GET /healthz.
+// Package server is the relay's HTTP API: POST /v1/push, POST /v1/register, POST /v1/push/batch, POST /v1/media, GET /m/{id}, GET /healthz.
 package server
 
 import (

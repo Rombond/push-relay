@@ -16,6 +16,15 @@ limits:
 #   max_bytes: 1048576
 #   max_items: 100
 
+# registration:              # v0.4.0: POST /v1/register for apps with open_registration: true
+#   closed: false             # kill switch, also RELAY_REGISTRATION_CLOSED=1 or `relay registration close`
+#   new_keys_per_hour: 50     # global cap of new public keys, rotations free, -1 = none
+#   per_ip_per_minute: 30
+#   daily_quota: 200          # per public key, -1 = unlimited
+#   unused_days: 90           # delete public keys unused this long, -1 = never
+#   ip_retention_days: 30     # keep registration address hashes this long, -1 = forever
+#   client_ip_header: X-Forwarded-For   # only behind your reverse proxy
+
 apps:
   tipsarr:
     apns:
@@ -30,3 +39,4 @@ apps:
     # free_text: true                         # servers may send title/body and level, sound, thread, collapse, ttl
     # image_domains: [image.tmdb.org]          # hosts an `image` URL may use ("*.example.org" works)
     # media: true                              # servers may upload private images (needs media.base_url)
+    # open_registration: true                  # any server may get a public key (templates only, daily quota)
