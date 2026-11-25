@@ -1,0 +1,17 @@
+# Monthly; security updates still arrive as soon as an advisory exists.
+# GitHub Actions are pinned by commit SHA and base images by digest, so these updates are the only way they move.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      actions: { patterns: ['*'] }
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: monthly }
+  - package-ecosystem: gomod
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      go: { patterns: ['*'], update-types: [minor, patch] }
