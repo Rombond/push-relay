@@ -102,6 +102,46 @@ func buildAndroid(m push.Message) android {
 	return a
 }
 
+// Live update (v1.1.0): data-only, so the app's FirebaseMessagingService always runs and redraws its
+// ongoing notification. A separate type keeps the alert message above byte for byte unchanged.
+type liveBody struct {
+	Message liveMessage `json:"message"`
+}
+
+type liveMessage struct {
+	Token   string            `json:"token"`
+	Data    map[string]string `json:"data"`
+	Android liveAndroid       `json:"android"`
+}
+
+type liveAndroid struct {
+	Priority    string `json:"priority"`
+	CollapseKey string `json:"collapse_key"`
+	TTL         string `json:"ttl"`
+}
+
+func buildLive(m push.Message) []byte {
+	l := m.Live
+	d := map[string]string{
+		"event": m.Event, "id": m.ID, "stage": l.Stage,
+		"percent": strconv.Itoa(l.Percent), "etaSeconds": strconv.Itoa(l.ETASeconds),
+		"updatedAt": strconv.FormatInt(l.Timestamp, 10), "end": strconv.FormatBool(l.End),
+		"dismissAfter": strconv.Itoa(l.DismissAfter),
+	}
+	if m.Server != "" {
+		d["server"] = m.Server
+	}
+	a := liveAndroid{Priority: "normal", CollapseKey: "live-" + m.ID, TTL: "3600s"}
+	if l.High {
+		a.Priority = "high"
+	}
+	if l.End {
+		a.TTL = "14400s"
+	}
+	body, _ := json.Marshal(liveBody{Message: liveMessage{Token: m.Token, Data: d, Android: a}})
+	return body
+}
+
 func (c *Client) Send(ctx context.Context, m push.Message) push.Result {
 	body, _ := json.Marshal(sendBody{Message: message{
 		Token:        m.Token,
@@ -109,6 +149,9 @@ func (c *Client) Send(ctx context.Context, m push.Message) push.Result {
 		Data:         data(m),
 		Android:      buildAndroid(m),
 	}})
+	if m.Live != nil {
+		body = buildLive(m)
+	}
 	url := fmt.Sprintf("%s/v1/projects/%s/messages:send", c.base, c.project)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {

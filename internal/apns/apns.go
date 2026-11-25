@@ -142,8 +142,42 @@ func buildPayload(m push.Message) []byte {
 	return body
 }
 
+// Live Activity payload (v1.1.0): content-state only, no alert. Keys match the app's ActivityAttributes.ContentState.
+type livePayload struct {
+	APS liveAPS `json:"aps"`
+}
+
+type liveAPS struct {
+	Timestamp     int64        `json:"timestamp"`
+	Event         string       `json:"event"`
+	ContentState  contentState `json:"content-state"`
+	DismissalDate *int64       `json:"dismissal-date,omitempty"`
+}
+
+type contentState struct {
+	Stage      string `json:"stage"`
+	Percent    int    `json:"percent"`
+	ETASeconds int    `json:"etaSeconds"`
+	UpdatedAt  int64  `json:"updatedAt"`
+}
+
+func buildLivePayload(l *push.Live) []byte {
+	a := liveAPS{Timestamp: l.Timestamp, Event: "update",
+		ContentState: contentState{Stage: l.Stage, Percent: l.Percent, ETASeconds: l.ETASeconds, UpdatedAt: l.Timestamp}}
+	if l.End {
+		a.Event = "end"
+		d := l.Timestamp + int64(l.DismissAfter)
+		a.DismissalDate = &d
+	}
+	body, _ := json.Marshal(livePayload{APS: a})
+	return body
+}
+
 func (c *Client) Send(ctx context.Context, m push.Message) push.Result {
 	body := buildPayload(m)
+	if m.Live != nil {
+		body = buildLivePayload(m.Live)
+	}
 	for attempt := 0; ; attempt++ {
 		res, expired := c.do(ctx, m, body, attempt > 0)
 		if expired && attempt == 0 {
@@ -168,6 +202,26 @@ func (c *Client) do(ctx context.Context, m push.Message, body []byte, forceJWT b
 		return push.Result{Status: push.Failed, Error: "build request"}, false
 	}
 	req.Header.Set("authorization", "bearer "+tok)
+	if m.Live != nil {
+		prio, keep := "5", time.Hour
+		if m.Live.High {
+			prio = "10"
+		}
+		if m.Live.End {
+			keep = 4 * time.Hour
+		}
+		req.Header.Set("apns-topic", c.cfg.BundleID+".push-type.liveactivity")
+		req.Header.Set("apns-push-type", "liveactivity")
+		req.Header.Set("apns-priority", prio)
+		req.Header.Set("apns-expiration", strconv.FormatInt(c.cfg.Now().Add(keep).Unix(), 10))
+	} else {
+		c.alertHeaders(req, m)
+	}
+	req.Header.Set("content-type", "application/json")
+	return c.exchange(req)
+}
+
+func (c *Client) alertHeaders(req *http.Request, m push.Message) {
 	req.Header.Set("apns-topic", c.cfg.BundleID)
 	req.Header.Set("apns-push-type", "alert")
 	req.Header.Set("apns-priority", "10")
@@ -182,8 +236,9 @@ func (c *Client) do(ctx context.Context, m push.Message, body []byte, forceJWT b
 	if m.Collapse != "" {
 		req.Header.Set("apns-collapse-id", m.Collapse)
 	}
-	req.Header.Set("content-type", "application/json")
+}
 
+func (c *Client) exchange(req *http.Request) (push.Result, bool) {
 	resp, err := c.cfg.Client.Do(req)
 	if err != nil {
 		return push.Result{Status: push.Failed, Error: "apns unreachable"}, false
