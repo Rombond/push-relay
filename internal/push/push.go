@@ -22,7 +22,7 @@ type Message struct {
 	TTL      *int   // seconds Apple/Google keep it for an offline device; nil = 24 h (v0.2.0), 0 = now or never
 	Image    string // https URL the app's notification extension downloads (iOS) / shown by Android
 
-	// Live (v1.0.0): a Live Activity (iOS) / data-only (Android) update instead of an alert. No text at all.
+	// Live (v1.1.0): a Live Activity (iOS) / data-only (Android) update instead of an alert. No text at all.
 	Live *Live
 }
 

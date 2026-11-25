@@ -131,7 +131,7 @@ type Request struct {
 	Collapse string `json:"collapse"` // replaces the previous push with the same value
 	TTL      *int   `json:"ttl"`      // seconds kept for an offline device (default 24 h), 0 = now or never
 	Image    string `json:"image"`    // https URL on an allowed domain, or from POST /v1/media
-	// v1.0.0: a live update (Live Activity / data-only) instead of an alert. Needs event "live".
+	// v1.1.0: a live update (Live Activity / data-only) instead of an alert. Needs event "live".
 	Live *LiveRequest `json:"live"`
 }
 

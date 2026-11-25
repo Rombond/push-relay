@@ -45,7 +45,7 @@ type RegisterResponse struct {
 	App            string `json:"app"`
 	Rotated        bool   `json:"rotated"`
 	DailyQuota     int    `json:"dailyQuota"`     // 0 = unlimited
-	LiveDailyQuota int    `json:"liveDailyQuota"` // live updates (v1.0.0), 0 = unlimited
+	LiveDailyQuota int    `json:"liveDailyQuota"` // live updates (v1.1.0), 0 = unlimited
 }
 
 func (s *Server) clientIP(r *http.Request) string {

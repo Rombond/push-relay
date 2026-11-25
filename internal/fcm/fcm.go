@@ -102,7 +102,7 @@ func buildAndroid(m push.Message) android {
 	return a
 }
 
-// Live update (v1.0.0): data-only, so the app's FirebaseMessagingService always runs and redraws its
+// Live update (v1.1.0): data-only, so the app's FirebaseMessagingService always runs and redraws its
 // ongoing notification. A separate type keeps the alert message above byte for byte unchanged.
 type liveBody struct {
 	Message liveMessage `json:"message"`

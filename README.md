@@ -53,7 +53,7 @@ Reply `{"status": "sent" | "invalid_token" | "rate_limited" | "quota_exceeded" |
 
 `POST /v1/push/batch` takes `{"items": [ ... ]}` (1 to 100 entries) and always answers 200 with `{"items": [result, ...]}` in the same order. `GET /healthz`. Prometheus counters on the separate `admin_listen` port at `/metrics`.
 
-### Live updates (v1.0.0)
+### Live updates (v1.1.0)
 
 A follow-up of one item's progress, shown outside the app: an iOS Live Activity, or an ongoing Android notification. Same endpoints (`/v1/push`, `/v1/push/batch`), with `event: "live"` and a `live` object:
 
@@ -79,7 +79,7 @@ A live message carries no text: `title`, `body`, `level`, `sound`, `thread`, `co
 - iOS: `apns-push-type: liveactivity`, topic `<bundle id>.push-type.liveactivity`, priority 10 (high) or 5 (low), body `{"aps":{"timestamp","event":"update"|"end","content-state":{"stage","percent","etaSeconds","updatedAt"},"dismissal-date"?}}`. `dismissal-date` = `timestamp + dismissAfter`.
 - Android: data-only message (no `notification` block, so the app always runs), `data` = `event, id, server?, stage, percent, etaSeconds, updatedAt, end, dismissAfter` as strings, `android.priority` high or normal, `collapse_key: live-<id>`.
 
-Live updates have their own daily quota, apart from alerts: `registration.live_daily_quota` (2000) for public keys, `limits.live_daily_quota` (0 = unlimited) for manual keys. Running out answers `quota_exceeded` with `error: "daily live quota reached"`; alerts still go. A relay older than v1.0.0 rejects the `live` field with 400.
+Live updates have their own daily quota, apart from alerts: `registration.live_daily_quota` (2000) for public keys, `limits.live_daily_quota` (0 = unlimited) for manual keys. Running out answers `quota_exceeded` with `error: "daily live quota reached"`; alerts still go. A relay older than v1.1.0 rejects the `live` field with 400.
 
 ### Open registration (v0.4.0)
 
