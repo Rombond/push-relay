@@ -21,6 +21,20 @@ type Message struct {
 	Collapse string // a newer push with the same value replaces the older one
 	TTL      *int   // seconds Apple/Google keep it for an offline device; nil = 24 h (v0.2.0), 0 = now or never
 	Image    string // https URL the app's notification extension downloads (iOS) / shown by Android
+
+	// Live (v1.1.0): a Live Activity (iOS) / data-only (Android) update instead of an alert. No text at all.
+	Live *Live
+}
+
+// Live is the state of a followed request: an enum and numbers only, never free text.
+type Live struct {
+	Stage        string
+	Percent      int
+	ETASeconds   int
+	Timestamp    int64 // unix seconds the state was computed
+	End          bool
+	DismissAfter int  // seconds the ended surface stays, only with End
+	High         bool // stage change: delivered now (APNs priority 10, FCM high)
 }
 
 type Status string

@@ -24,7 +24,7 @@ Why a relay: APNs and FCM only accept messages signed with the publisher's key, 
 |---|---|
 | `app` | optional, must match the key's app |
 | `platform` | `ios` or `android` |
-| `token` | iOS: 64-200 hex chars; Android: 20-1000 chars `[A-Za-z0-9:_-]` |
+| `token` | iOS: 64-512 hex chars (Live Activity tokens are longer); Android: 20-1000 chars `[A-Za-z0-9:_-]` |
 | `event` | must exist in the app's templates |
 | `title`, `body` | optional, used only when the app has `free_text: true`, ignored otherwise |
 | `id` | `[A-Za-z0-9_-]{1,64}` |
@@ -53,6 +53,34 @@ Reply `{"status": "sent" | "invalid_token" | "rate_limited" | "quota_exceeded" |
 
 `POST /v1/push/batch` takes `{"items": [ ... ]}` (1 to 100 entries) and always answers 200 with `{"items": [result, ...]}` in the same order. `GET /healthz`. Prometheus counters on the separate `admin_listen` port at `/metrics`.
 
+### Live updates (v1.1.0)
+
+A follow-up of one item's progress, shown outside the app: an iOS Live Activity, or an ongoing Android notification. Same endpoints (`/v1/push`, `/v1/push/batch`), with `event: "live"` and a `live` object:
+
+```json
+{ "platform": "ios", "token": "<Live Activity push token | FCM token>", "sandbox": false,
+  "event": "live", "id": "123", "server": "tipsarr.example.org",
+  "live": { "stage": "downloading", "percent": 42, "etaSeconds": 1800,
+            "timestamp": 1800000000, "end": false, "dismissAfter": 0, "priority": "low" } }
+```
+
+| Field | Rule |
+|---|---|
+| `stage` | `requested`, `approved`, `searching`, `downloading`, `available`, `declined`, `failed` |
+| `percent` | 0 to 100 |
+| `etaSeconds` | 0 to 2592000, 0 = unknown |
+| `timestamp` | unix seconds the state was computed, within a day of the relay's clock; 0 = now |
+| `end` | `true` ends the Live Activity / notification |
+| `dismissAfter` | 0 to 14400 seconds the ended surface stays (only with `end`) |
+| `priority` | `high` (stage change, delivered now) or `low` (progress, default) |
+
+A live message carries no text: `title`, `body`, `level`, `sound`, `thread`, `collapse`, `ttl` and `image` must be empty (400 otherwise), `lang` is ignored, and templates are not used. Public keys may send it.
+
+- iOS: `apns-push-type: liveactivity`, topic `<bundle id>.push-type.liveactivity`, priority 10 (high) or 5 (low), body `{"aps":{"timestamp","event":"update"|"end","content-state":{"stage","percent","etaSeconds","updatedAt"},"dismissal-date"?}}`. `dismissal-date` = `timestamp + dismissAfter`.
+- Android: data-only message (no `notification` block, so the app always runs), `data` = `event, id, server?, stage, percent, etaSeconds, updatedAt, end, dismissAfter` as strings, `android.priority` high or normal, `collapse_key: live-<id>`.
+
+Live updates have their own daily quota, apart from alerts: `registration.live_daily_quota` (2000) for public keys, `limits.live_daily_quota` (0 = unlimited) for manual keys. Running out answers `quota_exceeded` with `error: "daily live quota reached"`; alerts still go. A relay older than v1.1.0 rejects the `live` field with 400.
+
 ### Open registration (v0.4.0)
 
 For apps with `open_registration: true`. No authentication: the server identifies itself with an `installId`, a random id it generates once and keeps (16-128 chars `[A-Za-z0-9_-]`, 128 bits of randomness or more).
@@ -65,7 +93,7 @@ For apps with `open_registration: true`. No authentication: the server identifie
 
 `serverUrl` (http/https, 256 chars) and `version` (`[A-Za-z0-9._+-]{1,32}`) are optional, kept for abuse investigation. Body max 2 KB, unknown fields rejected.
 
-Reply `{"key": "pr_...", "keyId": 12, "app": "tipsarr", "rotated": false, "dailyQuota": 200}` (`dailyQuota` 0 = unlimited). The key is shown once; store it and send it as `Bearer` like any key.
+Reply `{"key": "pr_...", "keyId": 12, "app": "tipsarr", "rotated": false, "dailyQuota": 200, "liveDailyQuota": 2000}` (0 = unlimited). The key is shown once; store it and send it as `Bearer` like any key.
 
 | HTTP | `error` | Meaning |
 |---|---|---|
@@ -107,6 +135,7 @@ registration:
   new_keys_per_hour: 50    # new public keys over a sliding hour, all apps and addresses; rotations do not count; -1 = no cap
   per_ip_per_minute: 30    # HTTP rate limit of /v1/register per client address
   daily_quota: 200         # pushes per public key per UTC day; -1 = unlimited
+  live_daily_quota: 2000   # live updates per public key per UTC day; -1 = unlimited
   unused_days: 90          # public keys without any request this long are deleted (daily job); -1 = never
   ip_retention_days: 30    # registration address hashes are dropped after this; -1 = forever
   client_ip_header: ""     # e.g. X-Forwarded-For behind Caddy (last entry used); empty = TCP peer
