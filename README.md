@@ -24,7 +24,7 @@ Why a relay: APNs and FCM only accept messages signed with the publisher's key, 
 |---|---|
 | `app` | optional, must match the key's app |
 | `platform` | `ios` or `android` |
-| `token` | iOS: 64-200 hex chars; Android: 20-1000 chars `[A-Za-z0-9:_-]` |
+| `token` | iOS: 64-512 hex chars (Live Activity tokens are longer); Android: 20-1000 chars `[A-Za-z0-9:_-]` |
 | `event` | must exist in the app's templates |
 | `title`, `body` | optional, used only when the app has `free_text: true`, ignored otherwise |
 | `id` | `[A-Za-z0-9_-]{1,64}` |

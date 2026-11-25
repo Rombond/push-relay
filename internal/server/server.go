@@ -38,7 +38,7 @@ const (
 var (
 	serverRe   = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$`)
 	idRe       = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-	iosTokenRe = regexp.MustCompile(`^[0-9a-fA-F]{64,200}$`)
+	iosTokenRe = regexp.MustCompile(`^[0-9a-fA-F]{64,512}$`) // Live Activity tokens are longer than device tokens
 	androidRe  = regexp.MustCompile(`^[A-Za-z0-9:_-]{20,1000}$`)
 	groupRe    = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`) // thread and collapse
 )
