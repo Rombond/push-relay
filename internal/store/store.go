@@ -65,6 +65,9 @@ ALTER TABLE keys ADD COLUMN rotated_at TEXT;
 CREATE UNIQUE INDEX keys_install ON keys(app, install_id) WHERE install_id IS NOT NULL;
 CREATE INDEX keys_public_created ON keys(public, created_at);
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);`,
+	// 2: v0.5.0 live updates, counted apart from alerts so a download does not eat the alert quota.
+	`ALTER TABLE usage ADD COLUMN live_sent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN live_failed INTEGER NOT NULL DEFAULT 0;`,
 }
 
 func Open(path string) (*Store, error) {
@@ -227,6 +230,26 @@ func (s *Store) Record(keyID int64, now time.Time, ok bool) error {
 	_, err := s.db.Exec(`
 INSERT INTO usage (key_id, day, sent, failed) VALUES (?, ?, ?, ?)
 ON CONFLICT (key_id, day) DO UPDATE SET sent = sent + excluded.sent, failed = failed + excluded.failed`,
+		keyID, day(now), sent, failed)
+	return err
+}
+
+// LiveToday returns the live updates attempted today by a key (sent + failed).
+func (s *Store) LiveToday(keyID int64, now time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COALESCE(SUM(live_sent + live_failed), 0) FROM usage WHERE key_id = ? AND day = ?`, keyID, day(now)).Scan(&n)
+	return n, err
+}
+
+// RecordLive counts one live update. Alert counters (sent, failed) are left alone.
+func (s *Store) RecordLive(keyID int64, now time.Time, ok bool) error {
+	sent, failed := 1, 0
+	if !ok {
+		sent, failed = 0, 1
+	}
+	_, err := s.db.Exec(`
+INSERT INTO usage (key_id, day, live_sent, live_failed) VALUES (?, ?, ?, ?)
+ON CONFLICT (key_id, day) DO UPDATE SET live_sent = live_sent + excluded.live_sent, live_failed = live_failed + excluded.live_failed`,
 		keyID, day(now), sent, failed)
 	return err
 }

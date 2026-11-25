@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -69,5 +70,36 @@ func TestUsageAndList(t *testing.T) {
 	ks, err := s.List()
 	if err != nil || len(ks) != 1 || ks[0].Sent != 3 || ks[0].Failed != 1 {
 		t.Fatalf("%+v %v", ks, err)
+	}
+}
+
+func TestMigrationTwoOnV1Database(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(migrations[0] + `PRAGMA user_version = 1;
+INSERT INTO keys (app, name, hash, created_at) VALUES ('tipsarr', 'old', 'h', '2026-01-01T00:00:00Z');
+INSERT INTO usage (key_id, day, sent, failed) VALUES (1, '2026-11-07', 3, 1);`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	st.RecordLive(1, now, true)
+	st.RecordLive(1, now, false)
+	if n, _ := st.Today(1, now); n != 4 {
+		t.Fatalf("alerts %d", n)
+	}
+	if n, _ := st.LiveToday(1, now); n != 2 {
+		t.Fatalf("live %d", n)
 	}
 }

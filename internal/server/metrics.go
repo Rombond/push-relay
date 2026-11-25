@@ -38,6 +38,7 @@ var counters = []string{
 	"push_relay_rotations_total",             // re-registrations that rotated a key, per app
 	"push_relay_registration_refusals_total", // per reason
 	"push_relay_quota_refusals_total",        // pushes refused by a daily quota, per app
+	"push_relay_live_total",                  // live updates handed to APNs/FCM, per app
 }
 
 func (m *Metrics) Handler() http.Handler {

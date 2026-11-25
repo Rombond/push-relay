@@ -61,33 +61,36 @@ type App struct {
 }
 
 type Server struct {
-	Store  *store.Store
-	Apps   map[string]*App
-	Log    *slog.Logger
-	Now    func() time.Time
-	Quota  int
-	Media  *media.Store // nil = POST /v1/media and GET /m/ off
-	keyLim *limit.Limiter
-	tokLim *limit.Limiter
-	met    *Metrics
-	reg    config.Registration
-	regLim *limit.Limiter
-	regMu  sync.Mutex
+	Store *store.Store
+	Apps  map[string]*App
+	Log   *slog.Logger
+	Now   func() time.Time
+	Quota int
+	// LiveQuota: live updates per manual key per UTC day, 0 = unlimited (limits.live_daily_quota).
+	LiveQuota int
+	Media     *media.Store // nil = POST /v1/media and GET /m/ off
+	keyLim    *limit.Limiter
+	tokLim    *limit.Limiter
+	met       *Metrics
+	reg       config.Registration
+	regLim    *limit.Limiter
+	regMu     sync.Mutex
 }
 
 func New(st *store.Store, apps map[string]*App, lim config.Limits, log *slog.Logger) *Server {
 	perMin := lim.TokenPerMinute
 	s := &Server{
-		Store:  st,
-		Apps:   apps,
-		Log:    log,
-		Now:    time.Now,
-		Quota:  lim.DailyQuota,
-		keyLim: limit.New(rate.Limit(lim.KeyRate), lim.KeyBurst),
-		tokLim: limit.New(rate.Limit(float64(perMin)/60), max(3, perMin/2)),
-		met:    newMetrics(),
+		Store:     st,
+		Apps:      apps,
+		Log:       log,
+		Now:       time.Now,
+		Quota:     lim.DailyQuota,
+		LiveQuota: lim.LiveDailyQuota,
+		keyLim:    limit.New(rate.Limit(lim.KeyRate), lim.KeyBurst),
+		tokLim:    limit.New(rate.Limit(float64(perMin)/60), max(3, perMin/2)),
+		met:       newMetrics(),
 	}
-	s.SetRegistration(config.Registration{NewKeysPerHour: 50, PerIPPerMinute: 30, DailyQuota: 200})
+	s.SetRegistration(config.Registration{NewKeysPerHour: 50, PerIPPerMinute: 30, DailyQuota: 200, LiveDailyQuota: 2000})
 	s.met.Keys = st.CountKeys
 	return s
 }
@@ -128,6 +131,64 @@ type Request struct {
 	Collapse string `json:"collapse"` // replaces the previous push with the same value
 	TTL      *int   `json:"ttl"`      // seconds kept for an offline device (default 24 h), 0 = now or never
 	Image    string `json:"image"`    // https URL on an allowed domain, or from POST /v1/media
+	// v0.5.0: a live update (Live Activity / data-only) instead of an alert. Needs event "live".
+	Live *LiveRequest `json:"live"`
+}
+
+// LiveRequest is the state of a followed request. Enum and numbers only: no text ever reaches the phone.
+type LiveRequest struct {
+	Stage        string `json:"stage"`
+	Percent      int    `json:"percent"`
+	ETASeconds   int    `json:"etaSeconds"`
+	Timestamp    int64  `json:"timestamp"` // unix seconds, 0 = the relay's now
+	End          bool   `json:"end"`
+	DismissAfter int    `json:"dismissAfter"` // seconds, only with end
+	Priority     string `json:"priority"`     // high (stage change) or low (progress, default)
+}
+
+var liveStages = map[string]bool{"requested": true, "approved": true, "searching": true, "downloading": true,
+	"available": true, "declined": true, "failed": true}
+
+const (
+	maxLiveETA     = 30 * 24 * 3600
+	maxLiveDismiss = 4 * 3600
+	liveClockSkew  = 24 * 3600
+)
+
+// validateLive checks a live request. Presentation and text fields must be empty: a live message carries
+// no text, so public keys may send it too.
+func (s *Server) validateLive(req *Request) *httpError {
+	if req.Event != "live" {
+		return &httpError{http.StatusBadRequest, "live messages need event live"}
+	}
+	if req.Title != "" || req.Body != "" || req.Level != "" || req.Sound != "" || req.Thread != "" ||
+		req.Collapse != "" || req.TTL != nil || req.Image != "" {
+		return &httpError{http.StatusBadRequest, "live messages carry no text or presentation fields"}
+	}
+	l := req.Live
+	if !liveStages[l.Stage] {
+		return &httpError{http.StatusBadRequest, "invalid live stage"}
+	}
+	if l.Percent < 0 || l.Percent > 100 {
+		return &httpError{http.StatusBadRequest, "percent must be 0 to 100"}
+	}
+	if l.ETASeconds < 0 || l.ETASeconds > maxLiveETA {
+		return &httpError{http.StatusBadRequest, "etaSeconds must be 0 to 2592000"}
+	}
+	if l.Timestamp != 0 {
+		if d := l.Timestamp - s.Now().Unix(); d > liveClockSkew || d < -liveClockSkew {
+			return &httpError{http.StatusBadRequest, "timestamp too far from now"}
+		}
+	}
+	if l.DismissAfter < 0 || l.DismissAfter > maxLiveDismiss {
+		return &httpError{http.StatusBadRequest, "dismissAfter must be 0 to 14400"}
+	}
+	switch l.Priority {
+	case "", "low", "high":
+	default:
+		return &httpError{http.StatusBadRequest, "priority must be high or low"}
+	}
+	return nil
 }
 
 type httpError struct {
@@ -292,6 +353,12 @@ func (s *Server) validate(key store.Key, req *Request) (*App, *httpError) {
 	if req.Server != "" && !serverRe.MatchString(req.Server) {
 		return nil, &httpError{http.StatusBadRequest, "invalid server"}
 	}
+	if req.Live != nil {
+		if herr := s.validateLive(req); herr != nil {
+			return nil, herr
+		}
+		return app, nil
+	}
 	if herr := s.validatePresentation(app, req, freeText(app, key)); herr != nil {
 		return nil, herr
 	}
@@ -393,6 +460,9 @@ func (s *Server) process(ctx context.Context, key store.Key, req Request) (push.
 	if herr != nil {
 		return push.Result{}, herr
 	}
+	if req.Live != nil {
+		return s.processLive(ctx, key, app, req)
+	}
 	text, category, ok := app.Templates.Lookup(req.Event, req.Lang)
 	if !ok {
 		return push.Result{}, &httpError{http.StatusBadRequest, "unknown event"}
@@ -465,4 +535,48 @@ func cleanText(s string, max int) string {
 		}
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// processLive sends a validated live update. It has its own daily quota, apart from alerts.
+func (s *Server) processLive(ctx context.Context, key store.Key, app *App, req Request) (push.Result, *httpError) {
+	th := tokenHash(req.Platform, req.Token)
+	log := s.Log.With("key", key.ID, "app", req.App, "platform", req.Platform, "event", req.Event, "device", th[:8])
+	now := s.Now()
+	if q := s.liveQuotaFor(key); q > 0 {
+		n, err := s.Store.LiveToday(key.ID, now)
+		if err != nil {
+			log.Error("live quota", "err", err)
+			return push.Result{}, &httpError{http.StatusInternalServerError, "internal error"}
+		}
+		if n >= q {
+			u := now.UTC()
+			next := time.Date(u.Year(), u.Month(), u.Day()+1, 0, 0, 0, 0, time.UTC)
+			res := push.Result{Status: push.QuotaExceeded, RetryAfter: retrySeconds(next.Sub(now)), Error: "daily live quota reached"}
+			s.met.count(req.App, req.Platform, res.Status)
+			s.met.inc("push_relay_quota_refusals_total", "app", req.App)
+			return res, nil
+		}
+	}
+	if ok, wait := s.tokLim.Allow(th); !ok {
+		res := push.Result{Status: push.RateLimited, RetryAfter: retrySeconds(wait)}
+		s.met.count(req.App, req.Platform, res.Status)
+		return res, nil
+	}
+	l := req.Live
+	ts := l.Timestamp
+	if ts == 0 {
+		ts = now.Unix()
+	}
+	res := app.Senders[req.Platform].Send(ctx, push.Message{
+		Token: req.Token, Sandbox: req.Sandbox, Event: req.Event, ID: req.ID, Server: req.Server,
+		Live: &push.Live{Stage: l.Stage, Percent: l.Percent, ETASeconds: l.ETASeconds, Timestamp: ts,
+			End: l.End, DismissAfter: l.DismissAfter, High: l.Priority == "high"},
+	})
+	if err := s.Store.RecordLive(key.ID, now, res.Status != push.Failed); err != nil {
+		log.Error("record live usage", "err", err)
+	}
+	s.met.count(req.App, req.Platform, res.Status)
+	s.met.inc("push_relay_live_total", "app", req.App)
+	log.Info("live", "status", res.Status, "error", res.Error)
+	return res, nil
 }

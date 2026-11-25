@@ -40,11 +40,12 @@ type RegisterRequest struct {
 
 // RegisterResponse: the raw key is shown once.
 type RegisterResponse struct {
-	Key        string `json:"key"`
-	KeyID      int64  `json:"keyId"`
-	App        string `json:"app"`
-	Rotated    bool   `json:"rotated"`
-	DailyQuota int    `json:"dailyQuota"` // 0 = unlimited
+	Key            string `json:"key"`
+	KeyID          int64  `json:"keyId"`
+	App            string `json:"app"`
+	Rotated        bool   `json:"rotated"`
+	DailyQuota     int    `json:"dailyQuota"`     // 0 = unlimited
+	LiveDailyQuota int    `json:"liveDailyQuota"` // live updates (v0.5.0), 0 = unlimited
 }
 
 func (s *Server) clientIP(r *http.Request) string {
@@ -151,7 +152,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Log.Info("register", "key", res.ID, "app", req.App, "rotated", res.Rotated, "version", req.Version)
 	writeJSON(w, status, RegisterResponse{Key: res.Raw, KeyID: res.ID, App: req.App, Rotated: res.Rotated,
-		DailyQuota: s.quotaFor(store.Key{Public: true})})
+		DailyQuota: s.quotaFor(store.Key{Public: true}), LiveDailyQuota: s.liveQuotaFor(store.Key{Public: true})})
 }
 
 func validServerURL(raw string) bool {
@@ -172,4 +173,12 @@ func (s *Server) quotaFor(k store.Key) int {
 		return max(0, s.reg.DailyQuota)
 	}
 	return s.Quota
+}
+
+// liveQuotaFor is a key's daily live update quota, 0 = unlimited. The per-key override only covers alerts.
+func (s *Server) liveQuotaFor(k store.Key) int {
+	if k.Public {
+		return max(0, s.reg.LiveDailyQuota)
+	}
+	return s.LiveQuota
 }

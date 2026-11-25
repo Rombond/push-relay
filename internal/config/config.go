@@ -39,6 +39,7 @@ type Registration struct {
 	NewKeysPerHour  int `yaml:"new_keys_per_hour"` // default 50, -1 = no cap
 	PerIPPerMinute  int `yaml:"per_ip_per_minute"` // HTTP rate limit of /v1/register per client address, default 30
 	DailyQuota      int `yaml:"daily_quota"`       // pushes per public key per UTC day, default 200, -1 = unlimited
+	LiveDailyQuota  int `yaml:"live_daily_quota"`  // live updates per public key per UTC day, default 2000, -1 = unlimited
 	UnusedDays      int `yaml:"unused_days"`       // public keys unused this long are deleted, default 90, -1 = never
 	IPRetentionDays int `yaml:"ip_retention_days"` // registration address hashes kept, default 30, -1 = forever
 	// ClientIPHeader names a header set by your reverse proxy (e.g. X-Forwarded-For, last entry used).
@@ -51,6 +52,7 @@ type Limits struct {
 	KeyBurst       int     `yaml:"key_burst"`        //
 	TokenPerMinute int     `yaml:"token_per_minute"` // pushes per minute per device token
 	DailyQuota     int     `yaml:"daily_quota"`      // pushes per key per UTC day, 0 = unlimited
+	LiveDailyQuota int     `yaml:"live_daily_quota"` // live updates per key per UTC day, 0 = unlimited
 }
 
 type App struct {
@@ -137,6 +139,7 @@ func (c *Config) defaults() {
 	def(&r.NewKeysPerHour, 50)
 	def(&r.PerIPPerMinute, 30)
 	def(&r.DailyQuota, 200)
+	def(&r.LiveDailyQuota, 2000)
 	def(&r.UnusedDays, 90)
 	def(&r.IPRetentionDays, 30)
 }
@@ -164,7 +167,7 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: app %q has media: true but media.base_url is empty", name)
 		}
 	}
-	for _, v := range []int{c.Register.NewKeysPerHour, c.Register.PerIPPerMinute, c.Register.DailyQuota, c.Register.UnusedDays, c.Register.IPRetentionDays} {
+	for _, v := range []int{c.Register.NewKeysPerHour, c.Register.PerIPPerMinute, c.Register.DailyQuota, c.Register.LiveDailyQuota, c.Register.UnusedDays, c.Register.IPRetentionDays} {
 		if v < -1 {
 			return fmt.Errorf("config: registration values must be > 0, or -1 for none")
 		}
