@@ -65,7 +65,7 @@ ALTER TABLE keys ADD COLUMN rotated_at TEXT;
 CREATE UNIQUE INDEX keys_install ON keys(app, install_id) WHERE install_id IS NOT NULL;
 CREATE INDEX keys_public_created ON keys(public, created_at);
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);`,
-	// 2: v0.5.0 live updates, counted apart from alerts so a download does not eat the alert quota.
+	// 2: v1.0.0 live updates, counted apart from alerts so a download does not eat the alert quota.
 	`ALTER TABLE usage ADD COLUMN live_sent INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE usage ADD COLUMN live_failed INTEGER NOT NULL DEFAULT 0;`,
 }

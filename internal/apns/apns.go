@@ -142,7 +142,7 @@ func buildPayload(m push.Message) []byte {
 	return body
 }
 
-// Live Activity payload (v0.5.0): content-state only, no alert. Keys match the app's ActivityAttributes.ContentState.
+// Live Activity payload (v1.0.0): content-state only, no alert. Keys match the app's ActivityAttributes.ContentState.
 type livePayload struct {
 	APS liveAPS `json:"aps"`
 }
