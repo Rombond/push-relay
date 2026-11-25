@@ -13,6 +13,6 @@ Generic multi-app push relay (APNs + FCM), Go, MIT. Companion of Tipsarr (`~/Doc
 
 ## Branches and release (same as Tipsarr)
 - `master` is protected (PR only, owner bypass), `develop` is the integration branch (never deleted). Feature branches → PR to `develop`; `develop` → PR to `master`; tag `vX.Y.Z` on master.
-- CI (`ci.yml`) on pushes to master/develop and every PR. Preview images (`preview.yml`, amd64): `ghcr.io/rombond/push-relay:develop` and `:pr-<n>` (deleted when the PR closes). Release (`release.yml`) on tags: `:X.Y.Z`, `:X.Y`, `:latest`, multi-arch, SBOM + provenance, keyless cosign signature. Weekly `ghcr-cleanup.yml` drops untagged versions.
+- CI (`ci.yml`) on pushes to master/develop and every PR. Preview images (`preview.yml`, amd64 + arm64): `ghcr.io/rombond/push-relay:develop` and `:pr-<n>` (deleted when the PR closes). Release (`release.yml`) on tags: `:X.Y.Z`, `:X.Y`, `:latest`, multi-arch, SBOM + provenance, keyless cosign signature. Weekly `ghcr-cleanup.yml` drops untagged versions.
 - Actions pinned by commit SHA and base images by digest; Dependabot moves them monthly.
 - Never push to master, tag or deploy without the user's explicit go.
